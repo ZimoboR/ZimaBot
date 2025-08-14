@@ -99,8 +99,7 @@ async def send_with_retry(client, func, *args, **kwargs):
 
 # === Основной цикл копирования ===
 async def clone_loop():
-    global last_status, monitoring
-    print("🔄 Запуск цикла мониторинга...")
+    global last_status
     last_id = await get_last_id()
     last_status = f"🟢 Мониторинг запущен. Последний ID: {last_id}"
     print(last_status)
@@ -115,14 +114,13 @@ async def clone_loop():
                     if msg.id > last_id:
                         new_msgs.append(msg)
                     else:
-                        break  # Сообщения идут по убыванию
-                new_msgs = new_msgs[::-1]  # От старых к новым
+                        break
+                new_msgs = new_msgs[::-1]
 
                 if new_msgs:
                     print(f"📥 Найдено {len(new_msgs)} новых сообщений")
                     for msg in new_msgs:
-                        if msg.service:  # Пропускаем служебные
-                            print(f"⏭️ Пропущено служебное сообщение {msg.id}")
+                        if msg.service:
                             continue
 
                         try:
@@ -166,16 +164,12 @@ async def clone_loop():
                             await save_last_id(last_id)
 
                             # Уведомляем админа
-                            print(f"✅ Сообщение {msg.id} скопировано")
                             await bot.send_message(
                                 ADMIN_ID,
                                 f"✅ Скопировано сообщение #{msg.id}"
                             )
                         except Exception as e:
                             print(f"❌ Ошибка при копировании {msg.id}: {e}")
-
-                else:
-                    print("⏳ Нет новых сообщений")
 
                 await asyncio.sleep(CHECK_INTERVAL)
 
@@ -192,8 +186,8 @@ async def clone_loop():
 # === Telegram-бот: команды ===
 @Client.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_monitoring(_, message: Message):
+    print(f"Handling /start command from user {message.from_user.id}")  # Добавленный лог
     global monitoring
-    print(f"📥 Получена команда /start от {message.from_user.id}")
     if not monitoring:
         monitoring = True
         asyncio.create_task(clone_loop())
@@ -202,19 +196,17 @@ async def start_monitoring(_, message: Message):
     else:
         await message.reply("⚠️ Уже запущено.")
 
-
 @Client.on_message(filters.command("stop") & filters.user(ADMIN_ID))
 async def stop_monitoring(_, message: Message):
+    print(f"Handling /stop command from user {message.from_user.id}")  # Добавленный лог
     global monitoring
-    print(f"📥 Получена команда /stop от {message.from_user.id}")
     monitoring = False
     await message.reply("🛑 Мониторинг остановлен.")
     print("🔴 Мониторинг остановлен по команде /stop")
 
-
 @Client.on_message(filters.command("status") & filters.user(ADMIN_ID))
 async def status(_, message: Message):
-    print(f"📥 Получена команда /status от {message.from_user.id}")
+    print(f"Handling /status command from user {message.from_user.id}")  # Добавленный лог
     await message.reply(f"📊 Текущий статус:\n{last_status}")
     print(f"📤 Отправлен статус: {last_status}")
 
