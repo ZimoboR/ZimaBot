@@ -100,17 +100,18 @@ async def clone_loop():
         while monitoring:
             try:
                 new_msgs = []
+                # Получаем последние 10 сообщений
                 async for msg in user_client.get_chat_history(DONOR_ID, limit=10):
                     if msg.id > last_id:
                         new_msgs.append(msg)
                     else:
-                        break
-                new_msgs = new_msgs[::-1]
+                        break  # Сообщения идут по убыванию
+                new_msgs = new_msgs[::-1]  # От старых к новым
 
                 if new_msgs:
                     print(f"📥 Найдено {len(new_msgs)} новых сообщений")
                     for msg in new_msgs:
-                        if msg.service:
+                        if msg.service:  # Пропускаем служебные
                             continue
 
                         try:
@@ -148,10 +149,15 @@ async def clone_loop():
                                     parse_mode=ParseMode.HTML
                                 )
 
+                            # Обновляем ID
                             last_id = msg.id
                             await save_last_id(last_id)
-                            await bot.send_message(ADMIN_ID, f"✅ Скопировано сообщение #{msg.id}")
 
+                            # Уведомляем админа
+                            await bot.send_message(
+                                ADMIN_ID,
+                                f"✅ Скопировано сообщение #{msg.id}"
+                            )
                         except Exception as e:
                             print(f"❌ Ошибка при копировании {msg.id}: {e}")
 
@@ -161,11 +167,12 @@ async def clone_loop():
                 print(f"🚨 Ошибка в цикле: {e}")
                 await asyncio.sleep(CHECK_INTERVAL)
 
+        # После остановки
         last_status = "🔴 Остановлен"
         await bot.send_message(ADMIN_ID, "🛑 Мониторинг остановлен.")
 
 
-# === Команды бота ===
+# === Telegram-бот: команды ===
 @Client.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_monitoring(_, message: Message):
     global monitoring
@@ -192,6 +199,7 @@ async def status(_, message: Message):
 # === Запуск бота ===
 async def main():
     global bot
+    # Запускаем бота
     bot = Client(BOT_SESSION, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await bot.start()
     await bot.send_message(ADMIN_ID, "🟢 Бот запущен. Используй /start, /stop, /status")
@@ -207,5 +215,6 @@ async def main():
         await bot.stop()
 
 
+# === Точка входа ===
 if __name__ == '__main__':
     asyncio.run(main())
