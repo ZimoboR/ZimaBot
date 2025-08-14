@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ParseMode
@@ -214,9 +215,37 @@ async def status_handler(client, message: Message):
     print(f"📤 Отправлен статус: {last_status}")
 
 
+# === Фиктивный HTTP-сервер для Render (запуск в фоне) ===
+class HealthCheckHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ['/', '/health']:
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"OK")
+            print("🔍 Получен запрос на health check")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000)) # Используем PORT из env или 10000 по умолчанию
+    print(f"🌐 Запуск фиктивного HTTP-сервера на порту {port}...")
+    try:
+        httpd = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+        print(f"✅ Фиктивный HTTP-сервер запущен на порту {port}")
+        httpd.serve_forever()
+    except Exception as e:
+        print(f"❌ Ошибка при запуске HTTP-сервера: {e}")
+
 # === Запуск бота ===
 async def main():
     print("🚀 Запуск Telegram-бота...")
+
+    # Запускаем фиктивный HTTP-сервер в отдельном потоке
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    print("🌐 Фиктивный HTTP-сервер запущен в фоне (в отдельном потоке)")
 
     # Создаём экземпляр бота
     bot = Client(BOT_SESSION, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
