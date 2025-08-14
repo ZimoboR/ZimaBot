@@ -2,6 +2,7 @@
 import asyncio
 import json
 import os
+import threading  # Импортируем threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pyrogram import Client, filters
 from pyrogram.types import Message
