@@ -2,7 +2,6 @@
 import asyncio
 import json
 import os
-import threading  # Импортируем threading
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -230,7 +229,7 @@ class HealthCheckHandler(SimpleHTTPRequestHandler):
             self.end_headers()
 
 def run_health_server():
-    port = int(os.environ.get("PORT", 10000)) # Используем PORT из env или 10000 по умолчанию
+    port = int(os.environ.get("PORT", 8080)) # Используем PORT из env или 8080 по умолчанию
     print(f"🌐 Запуск фиктивного HTTP-сервера на порту {port}...")
     try:
         httpd = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
