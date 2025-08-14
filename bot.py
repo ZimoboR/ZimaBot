@@ -3,9 +3,9 @@ import asyncio
 import json
 import os
 from pyrogram import Client, filters
-from pyrogram.errors import FloodWait, RPCError, SlowmodeWait
 from pyrogram.types import Message
 from pyrogram.enums import ParseMode
+from pyrogram.errors import FloodWait, RPCError, SlowmodeWait
 
 # === Настройки из переменных окружения ===
 API_ID = int(os.getenv("API_ID"))
@@ -21,7 +21,7 @@ MY_ID = -1002763227980     # Твой канал для копирования
 MAX_RETRIES = 3
 DOWNLOAD_TIMEOUT = 60
 SEND_TIMEOUT = 30
-CHECK_INTERVAL = 15  # Можно сделать меньше для более быстрого реагирования
+CHECK_INTERVAL = 15  # Проверять каждые 15 секунд
 STATE_FILE = "last_message.json"
 SESSION_NAME = "cloner_user"
 BOT_SESSION = "cloner_bot"
@@ -29,7 +29,7 @@ BOT_SESSION = "cloner_bot"
 # === Глобальные переменные ===
 monitoring_task = None  # Ссылка на задачу мониторинга
 last_status = "🔴 Остановлен"
-bot_client = None # Ссылка на клиента бота
+bot_client = None  # Ссылка на клиента бота
 
 
 # === Функция: получить последний обработанный ID ===
@@ -137,9 +137,9 @@ async def monitoring_loop():
             try:
                 await bot_client.send_message(ADMIN_ID, last_status)
             except:
-                pass # Игнорируем ошибки отправки уведомления
+                pass  # Игнорируем ошибки отправки уведомления
 
-        while True: # Цикл будет прерван, если monitoring_task отменена
+        while True:  # Цикл будет прерван, если monitoring_task отменён
             try:
                 print("🔁 Проверка новых сообщений...")
                 # Получаем новые сообщения
@@ -228,7 +228,7 @@ async def monitoring_loop():
             except Exception as e:
                 print(f"🚨 Ошибка в цикле: {e}")
                 last_status = f"🟡 Ошибка: {e}"
-                await asyncio.sleep(CHECK_INTERVAL) # Ждем перед повтором
+                await asyncio.sleep(CHECK_INTERVAL)  # Ждем перед повтором
 
         last_status = "🔴 Остановлен"
         print(last_status)
@@ -276,14 +276,14 @@ async def status(client: Client, message: Message):
 async def main():
     global bot_client
     print("🚀 Запуск Telegram-бота...")
-    
+
     # Создаем клиента бота
     bot_client = Client(BOT_SESSION, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-    
+
     # Запускаем бота
     await bot_client.start()
     print("✅ Бот запущен. Управляй через Telegram.")
-    
+
     # Отправляем приветственное сообщение
     try:
         await bot_client.send_message(ADMIN_ID, "🟢 Бот запущен. Используй /start, /stop, /status")
@@ -292,12 +292,7 @@ async def main():
 
     # Держим бота в живых
     try:
-        # Используем run_until_disconnected или вечный sleep
-        # run_until_disconnected более надежен для Pyrogram
-        await bot_client.run_until_disconnected()
-        # Если run_until_disconnected недоступен, используйте:
-        # while True:
-        #     await asyncio.sleep(3600)
+        await bot_client.idle()  # Используем idle() вместо run_until_disconnected()
     finally:
         print("🧹 Остановка бота...")
         await bot_client.stop()
