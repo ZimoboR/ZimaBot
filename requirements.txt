@@ -1,2 +1,3 @@
-pyrogram~=2.0
-tgcrypto
+git add bot.py
+git commit -m "Добавил расширенное логирование"
+git push origin main
