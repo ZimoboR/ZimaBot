@@ -26,6 +26,7 @@ BOT_SESSION = "cloner_bot"
 # === Глобальные переменные ===
 monitoring = False
 last_status = "🔴 Остановлен"
+bot = None # Будет инициализирован позже
 
 
 # === Функция: получить последний обработанный ID ===
@@ -99,7 +100,8 @@ async def send_with_retry(client, func, *args, **kwargs):
 
 # === Основной цикл копирования ===
 async def clone_loop():
-    global last_status
+    global last_status, monitoring
+    print("🔄 Запуск цикла мониторинга...")
     last_id = await get_last_id()
     last_status = f"🟢 Мониторинг запущен. Последний ID: {last_id}"
     print(last_status)
@@ -114,13 +116,14 @@ async def clone_loop():
                     if msg.id > last_id:
                         new_msgs.append(msg)
                     else:
-                        break
-                new_msgs = new_msgs[::-1]
+                        break  # Сообщения идут по убыванию
+                new_msgs = new_msgs[::-1]  # От старых к новым
 
                 if new_msgs:
                     print(f"📥 Найдено {len(new_msgs)} новых сообщений")
                     for msg in new_msgs:
-                        if msg.service:
+                        if msg.service:  # Пропускаем служебные
+                            print(f"⏭️ Пропущено служебное сообщение {msg.id}")
                             continue
 
                         try:
@@ -164,12 +167,14 @@ async def clone_loop():
                             await save_last_id(last_id)
 
                             # Уведомляем админа
-                            await bot.send_message(
-                                ADMIN_ID,
-                                f"✅ Скопировано сообщение #{msg.id}"
-                            )
+                            print(f"✅ Сообщение {msg.id} скопировано")
+                            # await bot.send_message(ADMIN_ID, f"✅ Скопировано сообщение #{msg.id}") # Отключено для теста
+
                         except Exception as e:
                             print(f"❌ Ошибка при копировании {msg.id}: {e}")
+
+                else:
+                    print("⏳ Нет новых сообщений")
 
                 await asyncio.sleep(CHECK_INTERVAL)
 
@@ -180,14 +185,14 @@ async def clone_loop():
         # После остановки
         last_status = "🔴 Остановлен"
         print("🛑 Мониторинг остановлен")
-        await bot.send_message(ADMIN_ID, "🛑 Мониторинг остановлен.")
+        # await bot.send_message(ADMIN_ID, "🛑 Мониторинг остановлен.") # Отключено для теста
 
 
 # === Telegram-бот: команды ===
 @Client.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_monitoring(_, message: Message):
-    print(f"Handling /start command from user {message.from_user.id}")  # Добавленный лог
+async def start_monitoring(client, message: Message):
     global monitoring
+    print(f"📥 Получена команда /start от {message.from_user.id}")
     if not monitoring:
         monitoring = True
         asyncio.create_task(clone_loop())
@@ -196,32 +201,82 @@ async def start_monitoring(_, message: Message):
     else:
         await message.reply("⚠️ Уже запущено.")
 
+
 @Client.on_message(filters.command("stop") & filters.user(ADMIN_ID))
-async def stop_monitoring(_, message: Message):
-    print(f"Handling /stop command from user {message.from_user.id}")  # Добавленный лог
+async def stop_monitoring(client, message: Message):
     global monitoring
+    print(f"📥 Получена команда /stop от {message.from_user.id}")
     monitoring = False
     await message.reply("🛑 Мониторинг остановлен.")
     print("🔴 Мониторинг остановлен по команде /stop")
 
+
 @Client.on_message(filters.command("status") & filters.user(ADMIN_ID))
-async def status(_, message: Message):
-    print(f"Handling /status command from user {message.from_user.id}")  # Добавленный лог
+async def status(client, message: Message):
+    print(f"📥 Получена команда /status от {message.from_user.id}")
     await message.reply(f"📊 Текущий статус:\n{last_status}")
     print(f"📤 Отправлен статус: {last_status}")
 
+
+# === Фиктивный веб-сервер для Render ===
+from aiohttp import web
+import threading
+
+# Глобальная переменная для хранения ссылки на веб-сервер
+web_server_thread = None
+runner = None
+
+async def handle_health_check(request):
+    print("🔍 Получен запрос на health check")
+    return web.Response(text="OK")
+
+async def start_web_server():
+    global runner
+    app = web.Application()
+    app.add_routes([web.get('/', handle_health_check)])
+    app.add_routes([web.get('/health', handle_health_check)])
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    
+    # Получаем порт из переменной окружения PORT, иначе используем 10000
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Запуск веб-сервера на порту {port}...")
+    
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Веб-сервер запущен на порту {port}")
+
+def run_web_server_in_thread():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(start_web_server())
+    loop.run_forever()
 
 # === Запуск бота ===
 async def main():
     global bot
     print("🚀 Запуск Telegram-бота...")
+    
+    # Запускаем фиктивный веб-сервер в отдельном потоке
+    global web_server_thread
+    web_server_thread = threading.Thread(target=run_web_server_in_thread, daemon=True)
+    web_server_thread.start()
+    print("🌐 Фиктивный веб-сервер запущен в фоне")
+    
     # Запускаем бота
     bot = Client(BOT_SESSION, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+    
+    # Регистрируем обработчики команд (важно сделать это до запуска)
+    bot.add_handler(start_monitoring)
+    bot.add_handler(stop_monitoring)
+    bot.add_handler(status)
+    
     await bot.start()
     await bot.send_message(ADMIN_ID, "🟢 Бот запущен. Используй /start, /stop, /status")
     print("✅ Бот запущен. Управляй через Telegram.")
 
-    # Держим бота в живых (аналог bot.idle())
+    # Держим бота в живых
     try:
         while True:
             await asyncio.sleep(10)
@@ -229,7 +284,8 @@ async def main():
         print("🛑 Бот остановлен.")
     finally:
         await bot.stop()
-
+        if runner:
+            await runner.cleanup()
 
 # === Точка входа ===
 if __name__ == '__main__':
