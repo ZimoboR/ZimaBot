@@ -2,8 +2,6 @@
 import asyncio
 import json
 import os
-import threading
-from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ParseMode
@@ -88,7 +86,6 @@ async def send_with_retry(client, func, *args, **kwargs):
         except SlowmodeWait as e:
             wait = e.value
             print(f"⏳ Slowmode: ждём {wait} сек.")
-            await asyncio.sleep(wait)
         except RPCError as e:
             print(f"❌ Ошибка отправки: {e}")
             break
@@ -117,7 +114,7 @@ async def clone_loop(bot_client):
                         new_msgs.append(msg)
                     else:
                         break  # Сообщения идут по убыванию
-                new_msgs = new_msgs[::-1]  # От старых к новым
+                new_msgs = new_msgs[::-1]
 
                 if new_msgs:
                     print(f"📥 Найдено {len(new_msgs)} новых сообщений")
@@ -166,14 +163,13 @@ async def clone_loop(bot_client):
                             last_id = msg.id
                             await save_last_id(last_id)
 
-                            # Уведомляем админа (раскомментируй, если нужно)
-                            # await bot_client.send_message(ADMIN_ID, f"✅ Скопировано сообщение #{msg.id}")
-
+                            # Уведомляем админа
+                            await bot_client.send_message(
+                                ADMIN_ID,
+                                f"✅ Скопировано сообщение #{msg.id}"
+                            )
                         except Exception as e:
                             print(f"❌ Ошибка при копировании {msg.id}: {e}")
-
-                else:
-                    print("⏳ Нет новых сообщений")
 
                 await asyncio.sleep(CHECK_INTERVAL)
 
@@ -184,75 +180,47 @@ async def clone_loop(bot_client):
         # После остановки
         last_status = "🔴 Остановлен"
         print("🛑 Мониторинг остановлен")
-        # await bot_client.send_message(ADMIN_ID, "🛑 Мониторинг остановлен.") # Раскомментируй, если нужно
+        await bot_client.send_message(ADMIN_ID, "🛑 Мониторинг остановлен.")
 
 
-# === Фиктивный HTTP-сервер для Render (запуск в отдельном потоке) ===
-class HealthCheckHandler(SimpleHTTPRequestHandler):
-    def do_GET(self):
-        if self.path in ['/', '/health']:
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b"OK")
-            print("🔍 Получен запрос на health check")
-        else:
-            self.send_response(404)
-            self.end_headers()
+# === Telegram-бот: команды ===
+@Client.on_message(filters.command("start") & filters.user(ADMIN_ID))
+async def start_monitoring_handler(client, message: Message):
+    global monitoring
+    user_id = message.from_user.id
+    print(f"📥 Получена команда /start от {user_id}")
+    if not monitoring:
+        monitoring = True
+        asyncio.create_task(clone_loop(client))
+        await message.reply("✅ Мониторинг запущен.")
+        print("🟢 Мониторинг запущен по команде /start")
+    else:
+        await message.reply("⚠️ Уже запущено.")
 
-def run_health_server():
-    port = int(os.environ.get("PORT", 10000)) # Используем PORT из env или 10000 по умолчанию
-    print(f"🌐 Запуск фиктивного HTTP-сервера на порту {port}...")
-    try:
-        httpd = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-        print(f"✅ Фиктивный HTTP-сервер запущен на порту {port}")
-        httpd.serve_forever()
-    except Exception as e:
-        print(f"❌ Ошибка при запуске HTTP-сервера: {e}")
+@Client.on_message(filters.command("stop") & filters.user(ADMIN_ID))
+async def stop_monitoring_handler(client, message: Message):
+    global monitoring
+    user_id = message.from_user.id
+    print(f"📥 Получена команда /stop от {user_id}")
+    monitoring = False
+    await message.reply("🛑 Мониторинг остановлен.")
+    print("🔴 Мониторинг остановлен по команде /stop")
+
+@Client.on_message(filters.command("status") & filters.user(ADMIN_ID))
+async def status_handler(client, message: Message):
+    user_id = message.from_user.id
+    print(f"📥 Получена команда /status от {user_id}")
+    await message.reply(f"📊 Текущий статус:\n{last_status}")
+    print(f"📤 Отправлен статус: {last_status}")
+
 
 # === Запуск бота ===
 async def main():
     print("🚀 Запуск Telegram-бота...")
 
-    # Запускаем фиктивный HTTP-сервер в отдельном потоке
-    health_thread = threading.Thread(target=run_health_server, daemon=True)
-    health_thread.start()
-    print("🌐 Фиктивный HTTP-сервер запущен в фоне (в отдельном потоке)")
-
     # Создаём экземпляр бота
     bot = Client(BOT_SESSION, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     
-    # === Регистрируем обработчики команд здесь, после создания бота ===
-    @bot.on_message(filters.command("start") & filters.user(ADMIN_ID))
-    async def start_monitoring_handler(client, message: Message):
-        global monitoring
-        user_id = message.from_user.id
-        print(f"📥 Получена команда /start от {user_id}")
-        if not monitoring:
-            monitoring = True
-            # Передаем экземпляр бота в clone_loop
-            asyncio.create_task(clone_loop(client))
-            await message.reply("✅ Мониторинг запущен.")
-            print("🟢 Мониторинг запущен по команде /start")
-        else:
-            await message.reply("⚠️ Уже запущено.")
-
-    @bot.on_message(filters.command("stop") & filters.user(ADMIN_ID))
-    async def stop_monitoring_handler(client, message: Message):
-        global monitoring
-        user_id = message.from_user.id
-        print(f"📥 Получена команда /stop от {user_id}")
-        monitoring = False
-        await message.reply("🛑 Мониторинг остановлен.")
-        print("🔴 Мониторинг остановлен по команде /stop")
-
-    @bot.on_message(filters.command("status") & filters.user(ADMIN_ID))
-    async def status_handler(client, message: Message):
-        user_id = message.from_user.id
-        print(f"📥 Получена команда /status от {user_id}")
-        await message.reply(f"📊 Текущий статус:\n{last_status}")
-        print(f"📤 Отправлен статус: {last_status}")
-
     # Подключаемся к Telegram
     print("🔌 Подключение бота к Telegram...")
     await bot.start()
@@ -280,6 +248,4 @@ async def main():
 
 # === Точка входа ===
 if __name__ == '__main__':
-    print("--- Запуск приложения ---")
     asyncio.run(main())
-    print("--- Приложение завершено ---")
