@@ -50,26 +50,34 @@ async def save_last_id(msg_id: int):
         data[str(DONOR_ID)] = msg_id
         with open(STATE_FILE, 'w') as f:
             json.dump(data, f)
+        print(f"💾 Сохранён ID: {msg_id}")
     except Exception as e:
         print(f"❌ Ошибка сохранения ID: {e}")
 
 
 # === Скачивание медиа с повторами ===
 async def download_media(msg: Message):
-    for _ in range(3):
+    for attempt in range(3):
         try:
+            print(f"📥 Скачивание медиа (попытка {attempt + 1}) для сообщения {msg.id}")
             return await asyncio.wait_for(msg.download(in_memory=True), timeout=60)
-        except (asyncio.TimeoutError, FloodWait):
-            await asyncio.sleep(2)
-        except Exception:
-            return None
+        except asyncio.TimeoutError:
+            print(f"⚠️ Таймаут скачивания медиа для сообщения {msg.id}")
+        except FloodWait as e:
+            print(f"⏳ FloodWait при скачивании: ждём {e.value} секунд")
+            await asyncio.sleep(e.value)
+        except Exception as e:
+            print(f"❌ Ошибка скачивания медиа для сообщения {msg.id}: {e}")
+            break
+        await asyncio.sleep(1)
     return None
 
 
 # === Отправка с повторами при ошибках ===
 async def send_with_retry(client, func, *args, **kwargs):
-    for _ in range(3):
+    for attempt in range(3):
         try:
+            print(f"📤 Отправка сообщения (попытка {attempt + 1})")
             return await func(*args, **kwargs)
         except FloodWait as e:
             wait = e.value
@@ -83,7 +91,7 @@ async def send_with_retry(client, func, *args, **kwargs):
             print(f"❌ Ошибка отправки: {e}")
             break
         except Exception as e:
-            print(f"❌ Неизвестная ошибка: {e}")
+            print(f"❌ Неизвестная ошибка отправки: {e}")
             break
         await asyncio.sleep(1)
     return None
@@ -91,7 +99,8 @@ async def send_with_retry(client, func, *args, **kwargs):
 
 # === Основной цикл копирования ===
 async def clone_loop():
-    global last_status
+    global last_status, monitoring
+    print("🔄 Запуск цикла мониторинга...")
     last_id = await get_last_id()
     last_status = f"🟢 Мониторинг запущен. Последний ID: {last_id}"
     print(last_status)
@@ -99,6 +108,7 @@ async def clone_loop():
     async with Client(SESSION_NAME, api_id=API_ID, api_hash=API_HASH) as user_client:
         while monitoring:
             try:
+                print("🔁 Проверка новых сообщений...")
                 new_msgs = []
                 # Получаем последние 10 сообщений
                 async for msg in user_client.get_chat_history(DONOR_ID, limit=10):
@@ -112,9 +122,11 @@ async def clone_loop():
                     print(f"📥 Найдено {len(new_msgs)} новых сообщений")
                     for msg in new_msgs:
                         if msg.service:  # Пропускаем служебные
+                            print(f"⏭️ Пропущено служебное сообщение {msg.id}")
                             continue
 
                         try:
+                            print(f"📤 Обработка сообщения {msg.id}")
                             if msg.video:
                                 video = await download_media(msg)
                                 if video:
@@ -154,12 +166,16 @@ async def clone_loop():
                             await save_last_id(last_id)
 
                             # Уведомляем админа
+                            print(f"✅ Сообщение {msg.id} скопировано")
                             await bot.send_message(
                                 ADMIN_ID,
                                 f"✅ Скопировано сообщение #{msg.id}"
                             )
                         except Exception as e:
                             print(f"❌ Ошибка при копировании {msg.id}: {e}")
+
+                else:
+                    print("⏳ Нет новых сообщений")
 
                 await asyncio.sleep(CHECK_INTERVAL)
 
@@ -169,6 +185,7 @@ async def clone_loop():
 
         # После остановки
         last_status = "🔴 Остановлен"
+        print("🛑 Мониторинг остановлен")
         await bot.send_message(ADMIN_ID, "🛑 Мониторинг остановлен.")
 
 
@@ -176,10 +193,12 @@ async def clone_loop():
 @Client.on_message(filters.command("start") & filters.user(ADMIN_ID))
 async def start_monitoring(_, message: Message):
     global monitoring
+    print(f"📥 Получена команда /start от {message.from_user.id}")
     if not monitoring:
         monitoring = True
         asyncio.create_task(clone_loop())
         await message.reply("✅ Мониторинг запущен.")
+        print("🟢 Мониторинг запущен по команде /start")
     else:
         await message.reply("⚠️ Уже запущено.")
 
@@ -187,18 +206,23 @@ async def start_monitoring(_, message: Message):
 @Client.on_message(filters.command("stop") & filters.user(ADMIN_ID))
 async def stop_monitoring(_, message: Message):
     global monitoring
+    print(f"📥 Получена команда /stop от {message.from_user.id}")
     monitoring = False
     await message.reply("🛑 Мониторинг остановлен.")
+    print("🔴 Мониторинг остановлен по команде /stop")
 
 
 @Client.on_message(filters.command("status") & filters.user(ADMIN_ID))
 async def status(_, message: Message):
+    print(f"📥 Получена команда /status от {message.from_user.id}")
     await message.reply(f"📊 Текущий статус:\n{last_status}")
+    print(f"📤 Отправлен статус: {last_status}")
 
 
 # === Запуск бота ===
 async def main():
     global bot
+    print("🚀 Запуск Telegram-бота...")
     # Запускаем бота
     bot = Client(BOT_SESSION, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     await bot.start()
