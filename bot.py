@@ -2,6 +2,8 @@
 import asyncio
 import json
 import os
+import threading
+from http.server import HTTPServer, SimpleHTTPRequestHandler
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from pyrogram.enums import ParseMode
@@ -26,7 +28,7 @@ BOT_SESSION = "cloner_bot"
 # === Глобальные переменные ===
 monitoring = False
 last_status = "🔴 Остановлен"
-bot = None # Будет инициализирован позже
+bot_instance = None # Ссылка на экземпляр бота
 
 
 # === Функция: получить последний обработанный ID ===
@@ -166,9 +168,8 @@ async def clone_loop():
                             last_id = msg.id
                             await save_last_id(last_id)
 
-                            # Уведомляем админа
-                            print(f"✅ Сообщение {msg.id} скопировано")
-                            # await bot.send_message(ADMIN_ID, f"✅ Скопировано сообщение #{msg.id}") # Отключено для теста
+                            # Уведомляем админа (раскомментируй, если нужно)
+                            # await bot_instance.send_message(ADMIN_ID, f"✅ Скопировано сообщение #{msg.id}")
 
                         except Exception as e:
                             print(f"❌ Ошибка при копировании {msg.id}: {e}")
@@ -185,108 +186,113 @@ async def clone_loop():
         # После остановки
         last_status = "🔴 Остановлен"
         print("🛑 Мониторинг остановлен")
-        # await bot.send_message(ADMIN_ID, "🛑 Мониторинг остановлен.") # Отключено для теста
+        # await bot_instance.send_message(ADMIN_ID, "🛑 Мониторинг остановлен.") # Раскомментируй, если нужно
 
 
 # === Telegram-бот: команды ===
-@Client.on_message(filters.command("start") & filters.user(ADMIN_ID))
-async def start_monitoring(client, message: Message):
+# ВАЖНО: Обработчики определяются здесь, но регистрируются после создания экземпляра бота
+
+async def start_monitoring_handler(client, message: Message):
     global monitoring
-    print(f"📥 Получена команда /start от {message.from_user.id}")
+    user_id = message.from_user.id
+    print(f"📥 Получена команда /start от {user_id}")
     if not monitoring:
         monitoring = True
+        # Запускаем мониторинг в новой задаче
         asyncio.create_task(clone_loop())
         await message.reply("✅ Мониторинг запущен.")
         print("🟢 Мониторинг запущен по команде /start")
     else:
         await message.reply("⚠️ Уже запущено.")
 
-
-@Client.on_message(filters.command("stop") & filters.user(ADMIN_ID))
-async def stop_monitoring(client, message: Message):
+async def stop_monitoring_handler(client, message: Message):
     global monitoring
-    print(f"📥 Получена команда /stop от {message.from_user.id}")
+    user_id = message.from_user.id
+    print(f"📥 Получена команда /stop от {user_id}")
     monitoring = False
     await message.reply("🛑 Мониторинг остановлен.")
     print("🔴 Мониторинг остановлен по команде /stop")
 
-
-@Client.on_message(filters.command("status") & filters.user(ADMIN_ID))
-async def status(client, message: Message):
-    print(f"📥 Получена команда /status от {message.from_user.id}")
+async def status_handler(client, message: Message):
+    user_id = message.from_user.id
+    print(f"📥 Получена команда /status от {user_id}")
     await message.reply(f"📊 Текущий статус:\n{last_status}")
     print(f"📤 Отправлен статус: {last_status}")
 
 
-# === Фиктивный веб-сервер для Render ===
-from aiohttp import web
-import threading
+# === Фиктивный HTTP-сервер для Render (запуск в отдельном потоке) ===
+class HealthCheckHandler(SimpleHTTPRequestHandler):
+    def do_GET(self):
+        if self.path in ['/', '/health']:
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"OK")
+            print("🔍 Получен запрос на health check")
+        else:
+            self.send_response(404)
+            self.end_headers()
 
-# Глобальная переменная для хранения ссылки на веб-сервер
-web_server_thread = None
-runner = None
-
-async def handle_health_check(request):
-    print("🔍 Получен запрос на health check")
-    return web.Response(text="OK")
-
-async def start_web_server():
-    global runner
-    app = web.Application()
-    app.add_routes([web.get('/', handle_health_check)])
-    app.add_routes([web.get('/health', handle_health_check)])
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    
-    # Получаем порт из переменной окружения PORT, иначе используем 10000
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🌐 Запуск веб-сервера на порту {port}...")
-    
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"✅ Веб-сервер запущен на порту {port}")
-
-def run_web_server_in_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_web_server())
-    loop.run_forever()
+def run_health_server():
+    port = int(os.environ.get("PORT", 10000)) # Используем PORT из env или 10000 по умолчанию
+    print(f"🌐 Запуск фиктивного HTTP-сервера на порту {port}...")
+    try:
+        httpd = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+        print(f"✅ Фиктивный HTTP-сервер запущен на порту {port}")
+        httpd.serve_forever()
+    except Exception as e:
+        print(f"❌ Ошибка при запуске HTTP-сервера: {e}")
 
 # === Запуск бота ===
 async def main():
-    global bot
+    global bot_instance
     print("🚀 Запуск Telegram-бота...")
+
+    # Запускаем фиктивный HTTP-сервер в отдельном потоке
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    print("🌐 Фиктивный HTTP-сервер запущен в фоне (в отдельном потоке)")
+
+    # Создаём экземпляр бота
+    bot_instance = Client(BOT_SESSION, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
     
-    # Запускаем фиктивный веб-сервер в отдельном потоке
-    global web_server_thread
-    web_server_thread = threading.Thread(target=run_web_server_in_thread, daemon=True)
-    web_server_thread.start()
-    print("🌐 Фиктивный веб-сервер запущен в фоне")
-    
+    # Регистрируем обработчики команд
+    print("🔌 Регистрация обработчиков команд...")
+    bot_instance.add_handler(filters.command("start") & filters.user(ADMIN_ID), start_monitoring_handler)
+    bot_instance.add_handler(filters.command("stop") & filters.user(ADMIN_ID), stop_monitoring_handler)
+    bot_instance.add_handler(filters.command("status") & filters.user(ADMIN_ID), status_handler)
+    print("✅ Обработчики команд зарегистрированы")
+
     # Запускаем бота
-    bot = Client(BOT_SESSION, api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+    print("🔌 Подключение бота к Telegram...")
+    await bot_instance.start()
+    print("✅ Бот подключён к Telegram")
     
-    # Регистрируем обработчики команд (важно сделать это до запуска)
-    bot.add_handler(start_monitoring)
-    bot.add_handler(stop_monitoring)
-    bot.add_handler(status)
-    
-    await bot.start()
-    await bot.send_message(ADMIN_ID, "🟢 Бот запущен. Используй /start, /stop, /status")
-    print("✅ Бот запущен. Управляй через Telegram.")
+    # Отправляем приветственное сообщение админу
+    try:
+        await bot_instance.send_message(ADMIN_ID, "🟢 Бот запущен. Используй /start, /stop, /status")
+        print("✉️ Приветственное сообщение отправлено админу")
+    except Exception as e:
+        print(f"⚠️ Не удалось отправить приветственное сообщение: {e}")
+
+    print("✅ Основной цикл бота запущен. Ожидание команд...")
 
     # Держим бота в живых
     try:
+        # Вместо бесконечного цикла, используем idle() если он доступен,
+        # или реализуем простую паузу. Для Pyrogram v2+ idle() убран,
+        # поэтому используем вечный sleep.
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(3600) # Спим 1 час, проверяя периодически
     except (KeyboardInterrupt, SystemExit):
-        print("🛑 Бот остановлен.")
+        print("🛑 Получен сигнал остановки.")
     finally:
-        await bot.stop()
-        if runner:
-            await runner.cleanup()
+        print("🧹 Остановка бота...")
+        await bot_instance.stop()
+        print("✅ Бот остановлен.")
 
 # === Точка входа ===
 if __name__ == '__main__':
+    print("--- Запуск приложения ---")
     asyncio.run(main())
+    print("--- Приложение завершено ---")
