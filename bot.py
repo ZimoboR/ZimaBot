@@ -292,7 +292,11 @@ async def main():
 
     # Держим бота в живых
     try:
-        await bot_client.idle()  # Используем idle() вместо run_until_disconnected()
+        # Бесконечный цикл для удержания бота активным
+        while True:
+            await asyncio.sleep(10)
+    except KeyboardInterrupt:
+        print("🛑 Бот остановлен пользователем.")
     finally:
         print("🧹 Остановка бота...")
         await bot_client.stop()
