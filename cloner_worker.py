@@ -1,39 +1,18 @@
-# bot.py
 import asyncio
 import json
-import os
-from pyrogram import Client, filters
+from pyrogram import Client
+from pyrogram.errors import FloodWait, RPCError, SlowmodeWait
 from pyrogram.types import Message
 from pyrogram.enums import ParseMode
-from pyrogram.errors import FloodWait, RPCError, SlowmodeWait
 
-# === Настройки из переменных окружения ===
-API_ID = os.getenv("API_ID")
-API_HASH = os.getenv("API_HASH")
-DONOR_ID = os.getenv("DONOR_ID")
-MY_ID = os.getenv("MY_ID")
-
-# Проверяем, все ли переменные установлены
-if not all([API_ID, API_HASH, DONOR_ID, MY_ID]):
-    raise ValueError("Необходимо установить переменные окружения: API_ID, API_HASH, DONOR_ID, MY_ID")
-
-# Преобразуем ID в целые числа
-try:
-    API_ID = int(API_ID)
-    DONOR_ID = int(DONOR_ID)
-    MY_ID = int(MY_ID)
-except ValueError as e:
-    raise ValueError(f"Ошибка преобразования ID в число. Проверьте значения переменных окружения DONOR_ID и MY_ID. Ошибка: {e}")
+from keys import API_ID, API_HASH
 
 # Конфигурация
 MAX_RETRIES = 3
 DOWNLOAD_TIMEOUT = 60
 SEND_TIMEOUT = 30
-CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))  # По умолчанию 30 секунд
+CHECK_INTERVAL = 120  # Проверять каждые 30 секунд
 STATE_FILE = "last_message.json"  # Файл для сохранения последнего ID
-
-# ... остальной код ...
-
 
 async def get_last_processed_id(donor_id: int) -> int:
     """Читает ID последнего обработанного сообщения из файла"""
@@ -59,7 +38,6 @@ async def save_last_processed_id(donor_id: int, msg_id: int):
 
         with open(STATE_FILE, 'w', encoding='utf-8') as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        print(f"💾 Последний ID сохранен: {msg_id}")
     except Exception as e:
         print(f"❌ Не удалось сохранить состояние: {e}")
 
@@ -78,72 +56,62 @@ async def fetch_new_messages(client: Client, donor_id: int, last_id: int):
 async def download_media(msg: Message):
     for attempt in range(MAX_RETRIES):
         try:
-            print(f"📥 Скачивание медиа (попытка {attempt + 1}) для сообщения {msg.id}")
             return await asyncio.wait_for(msg.download(in_memory=True), timeout=DOWNLOAD_TIMEOUT)
         except asyncio.TimeoutError:
-            print(f"⚠️ Таймаут скачивания (попытка {attempt + 1}) для сообщения {msg.id}")
+            print(f"⚠️ Таймаут скачивания (попытка {attempt + 1})")
         except FloodWait as e:
             wait = e.value
-            print(f"⏳ FloodWait при скачивании сообщения {msg.id}: ждём {wait} сек")
+            print(f"⏳ FloodWait при скачивании: ждём {wait} сек")
             await asyncio.sleep(wait)
-            continue # Повторить попытку скачивания
+            continue
         except RPCError as e:
-            print(f"❌ Ошибка скачивания сообщения {msg.id}: {e}")
+            print(f"❌ Ошибка скачивания: {e}")
             break
         except Exception as e:
-            print(f"❌ Неизвестная ошибка скачивания сообщения {msg.id}: {e}")
+            print(f"❌ Ошибка: {e}")
             break
         await asyncio.sleep(1)
-    print(f"❌ Не удалось скачать медиа для сообщения {msg.id} после {MAX_RETRIES} попыток.")
     return None
 
 
 async def send_with_retry(client: Client, func, *args, **kwargs):
     for attempt in range(MAX_RETRIES):
         try:
-            print(f"📤 Отправка сообщения (попытка {attempt + 1})")
             return await asyncio.wait_for(func(*args, **kwargs), timeout=SEND_TIMEOUT)
         except asyncio.TimeoutError:
             print(f"⚠️ Таймаут отправки (попытка {attempt + 1})")
         except FloodWait as e:
             wait = e.value
-            print(f"⏳ FloodWait при отправке: ждём {wait} сек")
+            print(f"⏳ FloodWait: ждём {wait} сек")
             await asyncio.sleep(wait)
-            continue # Повторить попытку отправки
+            continue
         except SlowmodeWait as e:
             wait = e.value
-            print(f"⏳ Slowmode при отправке: ждём {wait} сек")
+            print(f"⏳ Slowmode: ждём {wait} сек")
             await asyncio.sleep(wait)
-            continue # Повторить попытку отправки
+            continue
         except RPCError as e:
             print(f"❌ Ошибка отправки: {e}")
             break
         except Exception as e:
-            print(f"❌ Неизвестная ошибка отправки: {e}")
+            print(f"❌ Ошибка: {e}")
             break
         await asyncio.sleep(1)
-    print(f"❌ Не удалось отправить сообщение после {MAX_RETRIES} попыток.")
     return None
 
 
-async def clone_new_messages():
-    """Основная функция клонирования."""
-    print("🔄 Инициализация клиента Pyrogram...")
-    # Используем 'my_session' для файла сессии. Он будет создан при первом запуске.
+async def clone_new_messages(donor_channel_id: int, my_channel_id: int):
     async with Client('my_session', api_id=API_ID, api_hash=API_HASH) as client:
-        print("✅ Клиент Pyrogram подключен.")
-
         print("🔄 Запуск мониторинга новых сообщений...")
 
         # Загружаем последний обработанный ID
-        last_id = await get_last_processed_id(DONOR_ID)
+        last_id = await get_last_processed_id(donor_channel_id)
         print(f"🟢 Последний ID: {last_id}. Ожидание новых сообщений...")
 
         while True:
             try:
-                print("🔁 Проверка новых сообщений...")
                 # Получаем новые сообщения
-                new_msgs = await fetch_new_messages(client, DONOR_ID, last_id)
+                new_msgs = await fetch_new_messages(client, donor_channel_id, last_id)
                 if new_msgs:
                     print(f"📥 Найдено {len(new_msgs)} новых сообщений!")
 
@@ -160,12 +128,11 @@ async def clone_new_messages():
                                     await send_with_retry(
                                         client,
                                         client.send_video,
-                                        chat_id=MY_ID,
+                                        chat_id=my_channel_id,
                                         video=video,
                                         caption=msg.caption.html if msg.caption else None,
                                         parse_mode=ParseMode.HTML
                                     )
-                                    print(f"✅ Видео из сообщения {msg.id} отправлено.")
                                 else:
                                     print("❌ Не удалось скачать видео")
 
@@ -175,12 +142,11 @@ async def clone_new_messages():
                                     await send_with_retry(
                                         client,
                                         client.send_photo,
-                                        chat_id=MY_ID,
+                                        chat_id=my_channel_id,
                                         photo=photo,
                                         caption=msg.caption.html if msg.caption else None,
                                         parse_mode=ParseMode.HTML
                                     )
-                                    print(f"✅ Фото из сообщения {msg.id} отправлено.")
                                 else:
                                     print("❌ Не удалось скачать фото")
 
@@ -190,12 +156,11 @@ async def clone_new_messages():
                                     await send_with_retry(
                                         client,
                                         client.send_document,
-                                        chat_id=MY_ID,
+                                        chat_id=my_channel_id,
                                         document=doc,
                                         caption=msg.caption.html if msg.caption else None,
                                         parse_mode=ParseMode.HTML
                                     )
-                                    print(f"✅ Документ из сообщения {msg.id} отправлен.")
                                 else:
                                     print("❌ Не удалось скачать документ")
 
@@ -203,26 +168,20 @@ async def clone_new_messages():
                                 await send_with_retry(
                                     client,
                                     client.send_message,
-                                    chat_id=MY_ID,
+                                    chat_id=my_channel_id,
                                     text=msg.text,
                                     parse_mode=ParseMode.HTML
                                 )
-                                print(f"✅ Текст из сообщения {msg.id} отправлен.")
 
                             else:
                                 print(f"⏭️ Пропущен тип: {msg.media or 'unknown'}")
 
-                            # Обновляем последний ID ТОЛЬКО после успешной попытки обработки
-                            # Это может привести к повторной обработке в случае частичного сбоя,
-                            # но предотвращает пропуск сообщений. Можно доработать логику.
+                            # Обновляем последний ID
                             last_id = msg.id
-                            await save_last_processed_id(DONOR_ID, last_id)
+                            await save_last_processed_id(donor_channel_id, last_id)
 
                         except Exception as e:
-                            # Ловим ошибки на уровне обработки отдельного сообщения,
-                            # чтобы не останавливать весь цикл
-                            print(f"❌ Критическая ошибка при копировании {msg.id}: {e}")
-                            # Можно добавить логику повтора или уведомления об ошибке
+                            print(f"❌ Ошибка при копировании {msg.id}: {e}")
 
                     print("✅ Все новые сообщения скопированы.")
                 else:
@@ -230,31 +189,12 @@ async def clone_new_messages():
 
                 await asyncio.sleep(CHECK_INTERVAL)
 
-            except asyncio.CancelledError:
-                print("🛑 Задача клонирования была отменена.")
-                break
             except Exception as e:
-                # Ловим ошибки на уровне всего цикла проверки
-                print(f"🚨 Критическая ошибка в цикле мониторинга: {e}")
-                print("⚠️ Цикл перезапустится через интервал проверки...")
-                await asyncio.sleep(CHECK_INTERVAL) # Ждем перед повтором цикла
+                print(f"🚨 Ошибка в цикле: {e}")
+                await asyncio.sleep(CHECK_INTERVAL)
 
 
-# Точка входа для Railway
-async def main():
-    """Главная асинхронная функция для запуска воркера."""
-    print("--- Запуск Telegram Cloner Worker ---")
-    try:
-        # Запускаем основной цикл клонирования
-        await clone_new_messages()
-    except KeyboardInterrupt:
-        print("\n🛑 Работа воркера остановлена пользователем (Ctrl+C).")
-    except Exception as e:
-        print(f"🚨 Фатальная ошибка воркера: {e}")
-    finally:
-        print("--- Работа Telegram Cloner Worker завершена ---")
-
-
-# Этот блок не будет выполняться на Railway, но полезен для локального тестирования
 if __name__ == '__main__':
-    asyncio.run(main())
+    DONOR_ID = -1001876663463
+    MY_ID = -1002763227980
+    asyncio.run(clone_new_messages(DONOR_ID, MY_ID))
