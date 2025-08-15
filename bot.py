@@ -1,28 +1,38 @@
-# cloner_worker.py
+# bot.py
 import asyncio
 import json
-import os  # Для получения переменных окружения
-# from pyrogram import Client # Импортируем внутри main, чтобы избежать потенциальных проблем с импортами до установки
+import os
+from pyrogram import Client, filters
+from pyrogram.types import Message
+from pyrogram.enums import ParseMode
+from pyrogram.errors import FloodWait, RPCError, SlowmodeWait
 
 # === Настройки из переменных окружения ===
-# Убедитесь, что эти переменные установлены в настройках вашего Railway сервиса
-API_ID = int(os.getenv("API_ID"))
+API_ID = os.getenv("API_ID")
 API_HASH = os.getenv("API_HASH")
-DONOR_ID = int(os.getenv("DONOR_ID"))
-MY_ID = int(os.getenv("MY_ID"))
+DONOR_ID = os.getenv("DONOR_ID")
+MY_ID = os.getenv("MY_ID")
 
-# Конфигурация (можно также вынести в env vars при желании)
+# Проверяем, все ли переменные установлены
+if not all([API_ID, API_HASH, DONOR_ID, MY_ID]):
+    raise ValueError("Необходимо установить переменные окружения: API_ID, API_HASH, DONOR_ID, MY_ID")
+
+# Преобразуем ID в целые числа
+try:
+    API_ID = int(API_ID)
+    DONOR_ID = int(DONOR_ID)
+    MY_ID = int(MY_ID)
+except ValueError as e:
+    raise ValueError(f"Ошибка преобразования ID в число. Проверьте значения переменных окружения DONOR_ID и MY_ID. Ошибка: {e}")
+
+# Конфигурация
 MAX_RETRIES = 3
 DOWNLOAD_TIMEOUT = 60
 SEND_TIMEOUT = 30
 CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", 30))  # По умолчанию 30 секунд
 STATE_FILE = "last_message.json"  # Файл для сохранения последнего ID
 
-# Импорты Pyrogram внутри асинхронной функции или вверху, после установки
-from pyrogram import Client
-from pyrogram.errors import FloodWait, RPCError, SlowmodeWait
-from pyrogram.types import Message
-from pyrogram.enums import ParseMode
+# ... остальной код ...
 
 
 async def get_last_processed_id(donor_id: int) -> int:
