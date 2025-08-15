@@ -1,1 +1,1 @@
-worker: python cloner_worker.py
+web: python3 script.py
